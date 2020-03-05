@@ -1,3 +1,5 @@
+const bcrypt = require('bcryptjs')
+
 function makeUsersArray() {
   return [
     {
@@ -193,6 +195,21 @@ function makeExpectedThingReviews(users, thingId, reviews) {
   })
 }
 
+function seedUsers(db, users) {
+  const preppedUsers = users.map(user => ({
+    ...user,
+    password: bcrypt.hashSync(user.password, 1)
+  }))
+  return db.into('thingful_users').insert(preppedUsers)
+    .then(() =>
+      // update the auto sequence to stay in sync
+      db.raw(
+        `SELECT setval('thingful_users_id_seq', ?)`,
+        [users[users.length - 1].id],
+      )
+    )
+}
+
 function makeMaliciousThing(user) {
   const maliciousThing = {
     id: 911,
@@ -231,23 +248,24 @@ function cleanTables(db) {
 }
 
 function seedThingsTables(db, users, things, reviews=[]) {
-  return db
-    .into('thingful_users')
-    .insert(users)
-    .then(() =>
-      db
-        .into('thingful_things')
-        .insert(things)
+  return db.transaction(async trx => {
+    await seedUsers(trx, users)
+    await trx.into('thingful_things').insert(things)
+    await trx.raw(
+      `SELECT setval('thingful_things_id_seq', ?)`,
+      [things[things.length - 1].id],
     )
-    .then(() =>
-      reviews.length && db.into('thingful_reviews').insert(reviews)
-    )
+    if(reviews.length) {
+      await trx.into('thingful_reviews').insert(reviews)
+      await trx.raw(
+        `SELECT setval('thingful_reviews_id_seq', ?)`,
+        [reviews[reviews.length - 1].id],
+      )}
+  })
 }
 
 function seedMaliciousThing(db, user, thing) {
-  return db
-    .into('thingful_users')
-    .insert([user])
+  return seedUsers(db, [user])
     .then(() =>
       db
         .into('thingful_things')
@@ -273,4 +291,5 @@ module.exports = {
   seedThingsTables,
   seedMaliciousThing,
   makeAuthHeader,
+  seedUsers,
 }
